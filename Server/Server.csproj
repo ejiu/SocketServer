@@ -48,8 +48,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="GamePlay.cs" />
+    <Compile Include="Room.cs" />
     <Compile Include="Tool\MessagePacker.cs" />
-    <Compile Include="Network.cs" />
+    <Compile Include="Game.cs" />
     <Compile Include="Tool\NetworkUtils.cs" />
     <Compile Include="Player.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

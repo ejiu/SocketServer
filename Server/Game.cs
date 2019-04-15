@@ -1,13 +1,13 @@
 ﻿using System;
 using Multiplay;
 
-public class Network
+public class Game
 {
     /// <summary>
-    /// 启动服务器
+    /// 启动服务器,注册服务器回调函数
     /// </summary>
     /// <param name="ip">IPv4地址</param>
-    public Network(string ip)
+    public Game(string ip)
     {
         //注册
         Server.Register(MessageType.HeartBeat, _HeartBeat);
@@ -20,6 +20,8 @@ public class Network
         //启动服务器
         Server.Start(ip);
     }
+
+    #region 功能逻辑
 
     private void _HeartBeat(Player player, byte[] data)
     {
@@ -52,11 +54,11 @@ public class Network
         CreatRoom receive = NetworkUtils.Deserialize<CreatRoom>(data);
 
         //逻辑检测(玩家不在任何房间中 并且 不存在该房间)
-        if (!player.InRoom && !Server.RoomDict.ContainsKey(receive.RoomId))
+        if (!player.InRoom && !Server.roomDict.ContainsKey(receive.RoomId))
         {
             //新增房间
             Room room = new Room(receive.RoomId);
-            Server.RoomDict.Add(room.RoomId, room);
+            Server.roomDict.Add(room.RoomId, room);
             //添加玩家
             room.playerList.Add(player);
             player.EnterRoom(receive.RoomId);
@@ -86,9 +88,9 @@ public class Network
         EnterRoom receive = NetworkUtils.Deserialize<EnterRoom>(data);
 
         //逻辑检测(玩家不在任何房间中 并且 存在该房间)
-        if (!player.InRoom && Server.RoomDict.ContainsKey(receive.RoomId))
+        if (!player.InRoom && Server.roomDict.ContainsKey(receive.RoomId))
         {
-            Room room = Server.RoomDict[receive.RoomId];
+            Room room = Server.roomDict[receive.RoomId];
             //加入玩家
             if (room.playerList.Count < Room.MAX_PLAYER_AMOUNT && !room.playerList.Contains(player))
             {
@@ -144,26 +146,26 @@ public class Network
         ExitRoom receive = NetworkUtils.Deserialize<ExitRoom>(data);
 
         //逻辑检测(有该房间)
-        if (Server.RoomDict.ContainsKey(receive.RoomId))
+        if (Server.roomDict.ContainsKey(receive.RoomId))
         {
             //确保有该房间并且玩家在该房间内
-            if (Server.RoomDict[receive.RoomId].playerList.Contains(player) ||
-                Server.RoomDict[receive.RoomId].OBs.Contains(player))
+            if (Server.roomDict[receive.RoomId].playerList.Contains(player) ||
+                Server.roomDict[receive.RoomId].OBs.Contains(player))
             {
                 result.Suc = true;
                 //移除该玩家
-                if (Server.RoomDict[receive.RoomId].playerList.Contains(player))
+                if (Server.roomDict[receive.RoomId].playerList.Contains(player))
                 {
-                    Server.RoomDict[receive.RoomId].playerList.Remove(player);
+                    Server.roomDict[receive.RoomId].playerList.Remove(player);
                 }
-                else if (Server.RoomDict[receive.RoomId].OBs.Contains(player))
+                else if (Server.roomDict[receive.RoomId].OBs.Contains(player))
                 {
-                    Server.RoomDict[receive.RoomId].OBs.Remove(player);
+                    Server.roomDict[receive.RoomId].OBs.Remove(player);
                 }
 
-                if (Server.RoomDict[receive.RoomId].playerList.Count == 0)
+                if (Server.roomDict[receive.RoomId].playerList.Count == 0)
                 {
-                    Server.RoomDict.Remove(receive.RoomId); //如果该房间没有玩家则移除该房间
+                    Server.roomDict.Remove(receive.RoomId); //如果该房间没有玩家则移除该房间
                 }
 
                 Console.WriteLine($"玩家:{player.Name}退出房间成功");
@@ -198,19 +200,19 @@ public class Network
         StartGame receive = NetworkUtils.Deserialize<StartGame>(data);
 
         //逻辑检测(有该房间)
-        if (Server.RoomDict.ContainsKey(receive.RoomId))
+        if (Server.roomDict.ContainsKey(receive.RoomId))
         {
             //玩家模式开始游戏
-            if (Server.RoomDict[receive.RoomId].playerList.Contains(player) &&
-                Server.RoomDict[receive.RoomId].playerList.Count == Room.MAX_PLAYER_AMOUNT)
+            if (Server.roomDict[receive.RoomId].playerList.Contains(player) &&
+                Server.roomDict[receive.RoomId].playerList.Count == Room.MAX_PLAYER_AMOUNT)
             {
                 //游戏开始
-                Server.RoomDict[receive.RoomId].State = Room.RoomState.Gaming;
+                Server.roomDict[receive.RoomId].State = Room.RoomState.Gaming;
 
                 Console.WriteLine($"玩家:{player.Name}开始游戏成功");
 
                 //遍历该房间玩家
-                foreach (var each in Server.RoomDict[receive.RoomId].playerList)
+                foreach (var each in Server.roomDict[receive.RoomId].playerList)
                 {
                     //开始游戏者先手
                     if (each == player)
@@ -230,13 +232,13 @@ public class Network
                 }
 
                 //如果有观察者
-                if (Server.RoomDict[receive.RoomId].OBs.Count > 0)
+                if (Server.roomDict[receive.RoomId].OBs.Count > 0)
                 {
                     result.Suc = true;
                     result.Watch = true;
                     data = NetworkUtils.Serialize(result);
                     //向观战者发送信息
-                    foreach (var each in Server.RoomDict[receive.RoomId].OBs)
+                    foreach (var each in Server.roomDict[receive.RoomId].OBs)
                     {
                         each.Send(MessageType.StartGame, data);
                     }
@@ -267,15 +269,15 @@ public class Network
         PlayChess receive = NetworkUtils.Deserialize<PlayChess>(data);
 
         //逻辑检测(有该房间)
-        if (Server.RoomDict.ContainsKey(receive.RoomId))
+        if (Server.roomDict.ContainsKey(receive.RoomId))
         {
             //该房间中的玩家有资格下棋
-            if (Server.RoomDict[receive.RoomId].playerList.Contains(player) &&
-                Server.RoomDict[receive.RoomId].State == Room.RoomState.Gaming &&
-                receive.Chess == Server.RoomDict[receive.RoomId].gamePlay.Turn)
+            if (Server.roomDict[receive.RoomId].playerList.Contains(player) &&
+                Server.roomDict[receive.RoomId].State == Room.RoomState.Gaming &&
+                receive.Chess == Server.roomDict[receive.RoomId].gamePlay.Turn)
             {
                 //判断结果
-                Chess chess = Server.RoomDict[receive.RoomId].gamePlay.Calculate(receive.X, receive.Y);
+                Chess chess = Server.roomDict[receive.RoomId].gamePlay.Calculate(receive.X, receive.Y);
                 //检测操作:如果游戏结束
                 bool over = _ChessResult(chess, result);
 
@@ -289,11 +291,11 @@ public class Network
 
                     //向该房间中玩家与观察者广播结果
                     data = NetworkUtils.Serialize(result);
-                    foreach (var each in Server.RoomDict[receive.RoomId].playerList)
+                    foreach (var each in Server.roomDict[receive.RoomId].playerList)
                     {
                         each.Send(MessageType.PlayChess, data);
                     }
-                    foreach (var each in Server.RoomDict[receive.RoomId].OBs)
+                    foreach (var each in Server.roomDict[receive.RoomId].OBs)
                     {
                         each.Send(MessageType.PlayChess, data);
                     }
@@ -301,7 +303,7 @@ public class Network
                     if (over)
                     {
                         Console.WriteLine("游戏结束,房间关闭");
-                        Server.RoomDict[receive.RoomId].Close();
+                        Server.roomDict[receive.RoomId].Close();
                     }
                 }
                 else
@@ -359,4 +361,6 @@ public class Network
 
         return over;
     }
+
+    #endregion
 }

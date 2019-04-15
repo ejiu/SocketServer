@@ -13,9 +13,7 @@ public delegate void ServerCallBack(Player client, byte[] data);
 public class CallBack
 {
     public Player Player;
-
     public byte[] Data;
-
     public ServerCallBack ServerCallBack;
 
     public CallBack(Player player, byte[] data, ServerCallBack serverCallBack)
@@ -31,71 +29,44 @@ public class CallBack
     }
 }
 
-public class Room
-{
-    public enum RoomState
-    {
-        Await,  //等待
-        Gaming  //对局开始
-    }
-
-    //房间ID
-    public int RoomId = 0;
-    //房间棋盘信息
-    public GamePlay gamePlay;
-    //房间状态
-    public RoomState State = RoomState.Await;
-
-    //最大玩家数量
-    public const int MAX_PLAYER_AMOUNT = 2;
-    //最大观察者数量
-    public const int MAX_OBSERVER_AMOUNT = 2;
-
-    public List<Player> playerList = new List<Player>(); //玩家集合
-    public List<Player> OBs = new List<Player>();     //观察者集合
-
-    public Room(int roomId)                           //构造
-    {
-        RoomId = roomId;
-        gamePlay = new GamePlay();
-    }
-
-    /// <summary>
-    /// 关闭房间:从房间字典中移除并且所有房间中的玩家清除
-    /// </summary>
-    public void Close()
-    {
-        //所有玩家跟观战者退出房间
-        foreach (var each in playerList)
-        {
-            each.ExitRoom();
-        }
-        foreach (var each in OBs)
-        {
-            each.ExitRoom();
-        }
-        Server.RoomDict.Remove(RoomId);
-    }
-}
-
 /// <summary>
 /// <see langword="static"/>
 /// </summary>
 public static class Server
 {
-    public static Dictionary<int, Room> RoomDict;                  //游戏房间集合
-
+    public static Dictionary<int, Room> roomDict;                  //游戏房间集合
     public static List<Player> playerList;                         //玩家集合
+    private static ConcurrentQueue<CallBack> _callBackQueue;       //回调方法队列
+    private static Dictionary<MessageType, ServerCallBack> _callBackDict
+        = new Dictionary<MessageType, ServerCallBack>();           //消息类型与回调方法
+    private static Socket _serverSocket;                           //服务器socket
 
-    private static ConcurrentQueue<CallBack> _callBackQueue;              //回调方法队列
+    /// <summary>
+    /// 启动服务器
+    /// </summary>
+    public static void Start(string ip)
+    {
+        //初始化数据结构
+        _callBackQueue = new ConcurrentQueue<CallBack>();
+        roomDict = new Dictionary<int, Room>();
+        _serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        playerList = new List<Player>();
 
-    private static Dictionary<MessageType, ServerCallBack> _callBacks
-        = new Dictionary<MessageType, ServerCallBack>();        //消息类型与回调方法
+        //初始化_serverSocket
+        IPEndPoint point = new IPEndPoint(IPAddress.Parse(ip), 8848);
+        _serverSocket.Bind(point); //初始化服务器ip地址与端口号
+        _serverSocket.Listen(10); //开启监听,此处参数为待连接队列数量,已连接socket不会占用队列
 
-    private static Socket _serverSocket;                        //服务器socket
+        //开启等待线程,与客户端通信,解析指令注册逻辑
+        Thread thread = new Thread(_Await) { IsBackground = true };
+        thread.Start();
+
+        //开启回调方法线程,执行逻辑
+        Thread handle = new Thread(_Callback) { IsBackground = true };
+        handle.Start();
+    }
 
     #region 线程相关
-
     private static void _Callback()
     {
         while (true)
@@ -104,7 +75,7 @@ public static class Server
             {
                 if (_callBackQueue.TryDequeue(out CallBack callBack))
                 {
-                    //执行回调
+                    //执行回调, 并退出队列
                     callBack.Execute();
                 }
             }
@@ -115,20 +86,20 @@ public static class Server
 
     private static void _Await()
     {
-        Socket client = null;
+        Socket clientSocket = null;
 
         while (true)
         {
             try
             {
                 //同步等待
-                client = _serverSocket.Accept();
+                clientSocket = _serverSocket.Accept();
 
                 //获取客户端唯一键
-                string endPoint = client.RemoteEndPoint.ToString();
+                string endPoint = clientSocket.RemoteEndPoint.ToString();
 
                 //新增玩家, 添加到玩家列表
-                Player player = new Player(client);
+                Player player = new Player(clientSocket);
                 playerList.Add(player);
 
                 Console.WriteLine($"{player.Socket.RemoteEndPoint}连接成功");
@@ -215,59 +186,51 @@ public static class Server
                 receive = 0;
             }
 
-            Console.WriteLine($"接受到消息, 房间数:{RoomDict.Count}, 玩家数:{playerList.Count}");
+            Console.WriteLine($"接受到消息, 房间数:{roomDict.Count}, 玩家数:{playerList.Count}");
 
             //执行回调事件
-            if (_callBacks.ContainsKey(type))
+            if (_callBackDict.ContainsKey(type))
             {
-                CallBack callBack = new CallBack(player, data, _callBacks[type]);
+                CallBack callBack = new CallBack(player, data, _callBackDict[type]);
                 //放入回调执行线程
                 _callBackQueue.Enqueue(callBack);
             }
         }
     }
-
     #endregion
-
-    /// <summary>
-    /// 启动服务器
-    /// </summary>
-    public static void Start(string ip)
-    {
-        //事件处理
-        _callBackQueue = new ConcurrentQueue<CallBack>();
-        
-        RoomDict = new Dictionary<int, Room>();
-
-        _serverSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        playerList = new List<Player>();
-
-        IPEndPoint point = new IPEndPoint(IPAddress.Parse(ip), 8848);
-
-        _serverSocket.Bind(point); //初始化服务器ip地址与端口号
-
-        _serverSocket.Listen(10); //开启监听,此处num为待连接队列数量,已连接socket不会占用队列
-
-        //开启等待玩家线程
-        Thread thread = new Thread(_Await) { IsBackground = true };
-        thread.Start();
-
-        //开启回调方法线程
-        Thread handle = new Thread(_Callback) { IsBackground = true };
-        handle.Start();
-    }
 
     /// <summary>
     /// 注册消息回调事件
     /// </summary>
     public static void Register(MessageType type, ServerCallBack method)
     {
-        if (!_callBacks.ContainsKey(type))
-            _callBacks.Add(type, method);
+        if (!_callBackDict.ContainsKey(type))
+            _callBackDict.Add(type, method);
         else
             Console.WriteLine("注册了相同的回调事件");
     }
 
+    /// <summary>
+    /// 封装数据
+    /// </summary>
+    private static byte[] _Pack(MessageType type, byte[] data = null)
+    {
+        MessagePacker packer = new MessagePacker();
+        if (data != null)
+        {
+            packer.Add((ushort)(4 + data.Length)); //消息长度
+            packer.Add((ushort)type);              //消息类型
+            packer.Add(data);                      //消息内容
+        }
+        else
+        {
+            packer.Add(4);                         //消息长度
+            packer.Add((ushort)type);              //消息类型
+        }
+        return packer.Package;
+    }
+
+    #region 扩展Player
     /// <summary>
     /// 封装并发送信息
     /// </summary>
@@ -300,27 +263,8 @@ public static class Server
         //如果该玩家此时在线
         if (player.InRoom)
         {
-            RoomDict[player.RoomId].Close();
+            roomDict[player.RoomId].Close();
         }
     }
-
-    /// <summary>
-    /// 封装数据
-    /// </summary>
-    private static byte[] _Pack(MessageType type, byte[] data = null)
-    {
-        MessagePacker packer = new MessagePacker();
-        if (data != null)
-        {
-            packer.Add((ushort)(4 + data.Length)); //消息长度
-            packer.Add((ushort)type);              //消息类型
-            packer.Add(data);                      //消息内容
-        }
-        else
-        {
-            packer.Add(4);                         //消息长度
-            packer.Add((ushort)type);              //消息类型
-        }
-        return packer.Package;
-    }
+    #endregion
 }
